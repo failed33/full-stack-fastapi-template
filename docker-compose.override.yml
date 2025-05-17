@@ -86,7 +86,8 @@ services:
       SMTP_TLS: "false"
       EMAILS_FROM_EMAIL: "noreply@example.com"
       CELERY_BROKER_URL: "redis://redis:6379/0"
-      STORAGE_ENDPOINT: "http://minio:9000"
+      STORAGE_ENDPOINT: "http://minio:9000" # Internal endpoint for SDK
+      MINIO_PUBLIC_ENDPOINT: "http://storage.${DOMAIN?Variable not set}" # Public endpoint, requires DOMAIN
       STORAGE_ACCESS_KEY: "${MINIO_ROOT_USER:-minio}"
       STORAGE_SECRET_KEY: "${MINIO_ROOT_PASSWORD:-password}"
     depends_on:
@@ -112,6 +113,31 @@ services:
       args:
         - VITE_API_URL=http://localhost:8000
         - NODE_ENV=development
+        - VITE_UPLOAD_ENDPOINT=http://storage.${DOMAIN?Variable not set}
+    environment:
+      - VITE_API_URL=http://localhost:8000
+      - NODE_ENV=development
+      - VITE_UPLOAD_ENDPOINT=http://storage.${DOMAIN?Variable not set}
+    depends_on:
+      backend:
+        condition: service_started
+      minio:
+        condition: service_started
+
+  prestart:
+    environment:
+      - MINIO_URL_INTERNAL=http://minio:9000
+      - MINIO_ROOT_USER=${MINIO_ROOT_USER}
+      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
+      - FRONTEND_ORIGIN=http://dashboard.${DOMAIN?Variable not set} # Example
+      - MINIO_UPLOADS_BUCKET=uploads
+      - MINIO_TRANSCRIPTS_BUCKET=transcripts
+      # - MINIO_CELERY_NOTIFICATION_ARN=arn:minio:sqs::redis:celery # If using notifications
+    depends_on:
+      db:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
 
   playwright:
     build:
@@ -143,6 +169,7 @@ services:
       context: ./backend
       dockerfile: docker/Dockerfile.cpu
     profiles: ["cpu"]
+    init: true
     command: ["celery", "-A", "app.tasks", "worker", "-Q", "transcription_cpu", "-l", "info"]
     environment:
       - CELERY_BROKER_URL=redis://redis:6379/0
@@ -204,6 +231,31 @@ services:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minio}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-password}
     command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "/usr/bin/mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    networks:
+      - default
+      - traefik-public
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=traefik-public"
+      - "traefik.constraint-label=traefik-public"
+      # HTTP router for MinIO API (port 9000)
+      - "traefik.http.routers.minio-s3-http.rule=Host(`storage.${DOMAIN?Variable not set}`)"
+      - "traefik.http.routers.minio-s3-http.entrypoints=http"
+      - "traefik.http.services.minio-s3.loadbalancer.server.port=9000"
+      # HTTP router for MinIO Console (port 9001)
+      - "traefik.http.routers.minio-console-http.rule=Host(`minio-console.${DOMAIN?Variable not set}`)"
+      - "traefik.http.routers.minio-console-http.entrypoints=http"
+      - "traefik.http.services.minio-console.loadbalancer.server.port=9001"
+      # Apply dummy https-redirect if consistent with local proxy setup
+      - "traefik.http.routers.minio-s3-http.middlewares=https-redirect"
+      - "traefik.http.routers.minio-console-http.middlewares=https-redirect"
+
 
   clamav:
     image: mkodockx/docker-clamav:alpine
