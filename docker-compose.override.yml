@@ -85,6 +85,17 @@ services:
       SMTP_PORT: "1025"
       SMTP_TLS: "false"
       EMAILS_FROM_EMAIL: "noreply@example.com"
+      CELERY_BROKER_URL: "redis://redis:6379/0"
+      STORAGE_ENDPOINT: "http://minio:9000"
+      STORAGE_ACCESS_KEY: "${MINIO_ROOT_USER:-minio}"
+      STORAGE_SECRET_KEY: "${MINIO_ROOT_PASSWORD:-password}"
+    depends_on:
+      db:
+        condition: service_started
+      redis:
+        condition: service_started
+      minio:
+        condition: service_started
 
   mailcatcher:
     image: schickling/mailcatcher
@@ -127,7 +138,94 @@ services:
     ports:
       - 9323:9323
 
+  worker-cpu:
+    build:
+      context: ./backend
+      dockerfile: docker/Dockerfile.cpu
+    profiles: ["cpu"]
+    command: ["celery", "-A", "app.tasks", "worker", "-Q", "transcription_cpu", "-l", "info"]
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      # Add other necessary environment variables for the backend if needed
+    depends_on:
+      - redis
+      - minio
+
+  worker-cuda:
+    build:
+      context: ./backend
+      dockerfile: docker/Dockerfile.cuda
+    profiles: ["cuda"]
+    command: ["celery", "-A", "app.tasks", "worker", "-Q", "transcription_cuda", "-l", "info"]
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      # Add other necessary environment variables for the backend if needed
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              capabilities: ["gpu"]
+    depends_on:
+      - redis
+      - minio
+
+  worker-rocm:
+    build:
+      context: ./backend
+      dockerfile: docker/Dockerfile.rocm
+    profiles: ["rocm"]
+    command: ["celery", "-A", "app.tasks", "worker", "-Q", "transcription_rocm", "-l", "info"]
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      # Add other necessary environment variables for the backend if needed
+    devices:
+      - /dev/kfd:/dev/kfd
+      - /dev/dri:/dev/dri
+    security_opt:
+      - seccomp:unconfined
+    depends_on:
+      - redis
+      - minio
+
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - "redisdata:/data"
+
+  minio:
+    image: minio/minio:latest
+    ports:
+      - "9000:9000" # S3 API
+      - "9001:9001" # web console
+    volumes:
+      - "miniodata:/data"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minio}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-password}
+    command: server /data --console-address ":9001"
+
+  clamav:
+    image: mkodockx/docker-clamav:alpine
+    volumes:
+      - "clamcache:/var/lib/clamav"
+
+  flower:
+    image: mher/flower:2.0.1
+    ports:
+      - "5555:5555"
+    environment:
+      CELERY_BROKER_URL: redis://redis:6379/0
+      FLOWER_BROKER_URL: redis://redis:6379/0
+    depends_on:
+      - redis
+
 networks:
   traefik-public:
     # For local dev, don't expect an external Traefik network
     external: false
+
+volumes:
+  redisdata: {}
+  miniodata: {}
+  clamcache: {}
