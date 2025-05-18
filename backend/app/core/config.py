@@ -100,13 +100,28 @@ class Settings(BaseSettings):
     FIRST_SUPERUSER: EmailStr
     FIRST_SUPERUSER_PASSWORD: str
 
+    # minIO configuration parameters
     MINIO_URL_INTERNAL: str = "minio:9000"
     MINIO_ROOT_USER: str
     MINIO_ROOT_PASSWORD: str
-    MINIO_UPLOADS_BUCKET: str = "uploads"
-    MINIO_TRANSCRIPTS_BUCKET: str = "transcripts"
+    MINIO_PRIMARY_BUCKET: str = "uploads"
+    MINIO_SECONDARY_BUCKET: str = "uploads.segments"
+    MINIO_TERTIARY_BUCKET: str = "uploads.transcripts"
     FRONTEND_ORIGIN: HttpUrl | None = None
-    MINIO_CELERY_NOTIFICATION_ARN: str | None = None
+    MINIO_KAFKA_NOTIFICATION_ARN: str | None = None
+
+    # dramatiq configuration parameters
+    DRAMATIQ_GROUP_ID: str = "tts-workers"
+    DRAMATIQ_MAX_POLL_RECORDS: int = 32
+    DRAMATIQ_AUTO_OFFSET_RESET: str = "earliest"
+
+    # kafka configuration parameters
+    KAFKA_BOOTSTRAP: str = "kafka:9092"
+    KAFKA_MAX_POLL_RECORDS: int = 32
+    KAFKA_AUTO_OFFSET_RESET: str = "earliest"
+    MINIO_NOTIFY_KAFKA_TOPIC_PRIMARY: str = "minio.uploads"
+    MINIO_NOTIFY_KAFKA_TOPIC_SECONDARY: str = "minio.uploads.segments"
+    MINIO_NOTIFY_KAFKA_TOPIC_TERTIARY: str = "minio.uploads.transcripts"
 
     @model_validator(mode="after")
     def _set_default_frontend_origin(self) -> Self:

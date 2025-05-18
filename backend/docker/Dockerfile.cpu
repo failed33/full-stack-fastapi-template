@@ -29,22 +29,24 @@ ENV UV_COMPILE_BYTECODE=1
 # Ref: https://docs.astral.sh/uv/guides/integration/docker/#caching
 ENV UV_LINK_MODE=copy
 
-# Install dependencies using uv
-# Ref: https://docs.astral.sh/uv/guides/integration/docker/#intermediate-layers
-# Copy only project definition files first for better layer caching
-COPY pyproject.toml uv.lock /app/
+# Copy project definition files first for better layer caching
+# These paths are relative to the build context (which is 'backend/')
+COPY pyproject.toml /app/pyproject.toml
+COPY uv.lock* /app/
+
+# Install dependencies using uv (excluding the project itself initially for better caching)
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-install-project
 
-# Copy the rest of the backend application code
-COPY . /app
+# Copy all application source code from the host's 'backend/' directory
+# into the image's '/app/' directory.
+# This makes 'app' the top-level package inside the image at /app/.
+COPY ./ /app/
 
-# Set PYTHONPATH to ensure the 'app' module is discoverable
-ENV PYTHONPATH=/app
-
-# Sync the project itself (installs the 'app' package and any remaining dependencies)
+# Sync the project itself (installs the 'app' package as defined in /app/pyproject.toml
+# and any remaining dependencies). uv will find the 'app' sources in /app/app/.
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync
+    uv sync --locked
 
-# Command to run the Celery worker
-CMD ["celery", "-A", "app.tasks", "worker", "-Q", "transcription_cpu", "-l", "info"]
+# ENTRYPOINT allows for easy command overriding in docker-compose
+ENTRYPOINT ["bash", "-c"]

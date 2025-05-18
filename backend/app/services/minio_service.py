@@ -1,5 +1,7 @@
 import json
 import logging
+import os
+import tempfile
 from urllib.parse import urlparse
 
 from minio import Minio
@@ -126,19 +128,23 @@ def set_bucket_notifications(
 ):
     if not notification_arn:  # notification_arn can be None from settings
         logger.info(
-            f"MINIO_CELERY_NOTIFICATION_ARN not set for bucket '{bucket_name}'. Skipping notification setup."
+            f"MINIO_KAFKA_NOTIFICATION_ARN not set for bucket '{bucket_name}'. Skipping notification setup."
         )
         return
 
-    notification_events = ["s3:ObjectCreated:*", "s3:ObjectRemoved:*"]
-    # Make ID unique per bucket to avoid conflicts if multiple buckets notify the same ARN with different filters
+    notification_events = ["s3:ObjectCreated:*"]
     queue_config_id = f"celery-queue-{bucket_name.replace('.', '-')}-notification"
 
+    prefix = ""
+    suffix = ""
+
     queue_config = QueueConfig(
-        notification_arn,
-        notification_events,
+        queue=notification_arn,
+        events=notification_events,
+        prefix_filter_rule=prefix,
+        suffix_filter_rule=suffix,
+        config_id=queue_config_id,
     )
-    queue_config.config_id = queue_config_id
 
     notification_config = NotificationConfig(queue_config_list=[queue_config])
 
@@ -152,3 +158,104 @@ def set_bucket_notifications(
             f"Error setting bucket notification for '{bucket_name}' to ARN '{notification_arn}': {e}"
         )
         raise
+
+
+def download_file_to_tmp(
+    client: Minio, bucket_name: str, object_name: str, logger: logging.Logger
+) -> str | None:
+    """
+    Downloads a file from MinIO to a temporary local file.
+
+    Args:
+        client: Initialized MinIO client.
+        bucket_name: Name of the source bucket.
+        object_name: Name of the object (key) in the bucket.
+        logger: Logger instance.
+
+    Returns:
+        Path to the temporary file, or None if download failed.
+    """
+    try:
+        # Create a temporary file. It's important to delete it manually after use.
+        # Suffix can be useful to retain original extension for some tools.
+        suffix = os.path.splitext(object_name)[1]
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+        temp_file_path = temp_file.name
+        temp_file.close()  # Close it so MinIO client can write to it
+
+        logger.info(
+            f"Attempting to download '{object_name}' from bucket '{bucket_name}' to '{temp_file_path}'..."
+        )
+        client.fget_object(bucket_name, object_name, temp_file_path)
+        logger.info(f"Successfully downloaded '{object_name}' to '{temp_file_path}'.")
+        return temp_file_path
+    except S3Error as e:
+        logger.error(f"Error downloading '{object_name}' from '{bucket_name}': {e}")
+        # Clean up the temp file if it was created and an error occurred
+        if "temp_file_path" in locals() and os.path.exists(temp_file_path):
+            os.remove(temp_file_path)
+        return None
+    except Exception as e:
+        logger.error(
+            f"An unexpected error occurred during download of '{object_name}': {e}"
+        )
+        if "temp_file_path" in locals() and os.path.exists(temp_file_path):
+            os.remove(temp_file_path)
+        return None
+
+
+def upload_file_from_tmp(
+    client: Minio,
+    local_file_path: str,
+    bucket_name: str,
+    target_object_name: str,
+    logger: logging.Logger,
+    cleanup_tmp_file: bool = True,
+) -> bool:
+    """
+    Uploads a local temporary file to MinIO and optionally cleans it up.
+
+    Args:
+        client: Initialized MinIO client.
+        local_file_path: Path to the local temporary file.
+        bucket_name: Name of the target bucket.
+        target_object_name: Name of the object (key) to create in the bucket.
+        logger: Logger instance.
+        cleanup_tmp_file: Whether to delete the local temporary file after upload.
+
+    Returns:
+        True if upload was successful, False otherwise.
+    """
+    if not os.path.exists(local_file_path):
+        logger.error(
+            f"Local file '{local_file_path}' not found for upload to '{target_object_name}' in '{bucket_name}'."
+        )
+        return False
+    try:
+        logger.info(
+            f"Attempting to upload '{local_file_path}' to bucket '{bucket_name}' as '{target_object_name}'..."
+        )
+        client.fput_object(bucket_name, target_object_name, local_file_path)
+        logger.info(
+            f"Successfully uploaded '{local_file_path}' to '{bucket_name}' as '{target_object_name}'."
+        )
+        return True
+    except S3Error as e:
+        logger.error(
+            f"Error uploading '{local_file_path}' to '{target_object_name}' in '{bucket_name}': {e}"
+        )
+        return False
+    except Exception as e:
+        logger.error(
+            f"An unexpected error occurred during upload of '{local_file_path}': {e}"
+        )
+        return False
+    finally:
+        if cleanup_tmp_file and os.path.exists(local_file_path):
+            try:
+                os.remove(local_file_path)
+                logger.info(f"Cleaned up temporary file: '{local_file_path}'.")
+            except OSError as e:
+                logger.error(
+                    f"Error cleaning up temporary file '{local_file_path}': {e}"
+                )

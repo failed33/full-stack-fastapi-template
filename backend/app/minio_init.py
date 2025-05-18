@@ -59,23 +59,23 @@ def initialize_minio_resources(app_settings: Settings) -> None:
 
     # Initialize Uploads Bucket
     minio_service.ensure_bucket_exists(
-        client, app_settings.MINIO_UPLOADS_BUCKET, logger
+        client, app_settings.MINIO_PRIMARY_BUCKET, logger
     )
 
     # Setup notifications for uploads bucket if ARN is configured
     minio_service.set_bucket_notifications(
         client,
-        app_settings.MINIO_UPLOADS_BUCKET,
-        app_settings.MINIO_CELERY_NOTIFICATION_ARN,
+        app_settings.MINIO_PRIMARY_BUCKET,
+        app_settings.MINIO_KAFKA_NOTIFICATION_ARN,
         logger,
     )
 
     # Initialize Transcripts Bucket
     minio_service.ensure_bucket_exists(
-        client, app_settings.MINIO_TRANSCRIPTS_BUCKET, logger
+        client, app_settings.MINIO_TERTIARY_BUCKET, logger
     )
     minio_service.set_public_download_policy(
-        client, app_settings.MINIO_TRANSCRIPTS_BUCKET, logger
+        client, app_settings.MINIO_TERTIARY_BUCKET, logger
     )
 
     logger.info("MinIO resource initialization complete.")

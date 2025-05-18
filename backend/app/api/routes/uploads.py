@@ -50,7 +50,7 @@ def create_presigned_upload_url(
 
     try:
         presigned_url = minio_client.presigned_put_object(
-            bucket_name=settings.MINIO_UPLOADS_BUCKET,
+            bucket_name=settings.MINIO_PRIMARY_BUCKET,
             object_name=object_name_in_bucket,
             expires=timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES),
         )

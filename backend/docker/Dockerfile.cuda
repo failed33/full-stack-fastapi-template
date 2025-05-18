@@ -1,44 +1,57 @@
-FROM nvcr.io/nvidia/pytorch:25.04-py3
+# Base image with CUDA support
+FROM nvidia/cuda:12.1.1-devel-ubuntu22.04
 
-# Set working directory
+# Set environment variables to ensure correct encoding and non-interactive frontend for apt
+ENV LANG C.UTF-8
+ENV LC_ALL C.UTF-8
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install Python 3.12, pip (for uv bootstrap if needed, though uv installs its own Python tools), ffmpeg, build-essential
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3.12 \
+    python3-pip \
+    python3.12-venv \
+    ffmpeg \
+    build-essential \
+    curl \
+    # Clean up apt caches
+    && rm -rf /var/lib/apt/lists/*
+
+# Make python3.12 the default python3 and pip3
+RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1 && \
+    update-alternatives --install /usr/bin/pip3 pip3 /usr/bin/pip3 1
+
+# Verify python version
+RUN python3 --version
+RUN pip3 --version
+
 WORKDIR /app
 
-# Install system dependencies like ffmpeg
-RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg && \
-    rm -rf /var/lib/apt/lists/*
-
 # Install uv
-# Ref: https://docs.astral.sh/uv/guides/integration/docker/#installing-uv
 COPY --from=ghcr.io/astral-sh/uv:0.5.11 /uv /uvx /bin/
 
-# Place executables in the environment at the front of the path
-# Ref: https://docs.astral.sh/uv/guides/integration/docker/#using-the-environment
 ENV PATH="/app/.venv/bin:$PATH"
-
-# Compile bytecode
-# Ref: https://docs.astral.sh/uv/guides/integration/docker/#compiling-bytecode
 ENV UV_COMPILE_BYTECODE=1
-
-# uv Cache
-# Ref: https://docs.astral.sh/uv/guides/integration/docker/#caching
 ENV UV_LINK_MODE=copy
 
-# Install dependencies using uv
-# Ref: https://docs.astral.sh/uv/guides/integration/docker/#intermediate-layers
-# Copy only project definition files first for better layer caching
-COPY pyproject.toml uv.lock /app/
+# Copy project definition files
+COPY pyproject.toml /app/pyproject.toml
+COPY uv.lock* /app/
+
+# Install dependencies using uv (excluding project)
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-install-project
 
-# Copy the rest of the backend application code from the build context (backend/) to /app in the image
-COPY . /app
+# Copy all application code from the host's 'app' directory
+# into the image's '/app/' directory.
+COPY ./ /app/
 
-# Set PYTHONPATH to ensure the 'app' module is discoverable, similar to the main backend Dockerfile
-ENV PYTHONPATH=/app
+# Add /app to PYTHONPATH
+ENV PYTHONPATH "${PYTHONPATH}:/app"
 
-# Sync the project itself (installs the 'app' package and any remaining dependencies)
+# Sync the project itself
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync
+    uv sync --locked
 
-# Command to run the Celery worker
-CMD ["celery", "-A", "app.tasks", "worker", "-Q", "transcription_cuda", "-l", "info"]
+# ENTRYPOINT allows for easy command overriding in docker-compose
+ENTRYPOINT ["bash", "-c"]

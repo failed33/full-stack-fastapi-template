@@ -1,5 +1,23 @@
+#
+# Dramatiq services environment variables anchor
+x-dramatiq-env: &dramatiq_env
+  KAFKA_BOOTSTRAP: "kafka:9092"
+  MINIO_TOPIC: ${MINIO_TOPIC:-minio.uploads} # Used by dispatcher
+  STORAGE_ENDPOINT: "http://minio:9000"
+  MINIO_PUBLIC_ENDPOINT: "http://storage.${DOMAIN?Variable not set}"
+  STORAGE_ACCESS_KEY: "${MINIO_ROOT_USER:-minio}"
+  STORAGE_SECRET_KEY: "${MINIO_ROOT_PASSWORD:-password}"
+  # Dramatiq configuration parameters
+  DRAMATIQ_GROUP_ID: "${DRAMATIQ_GROUP_ID:-tts-workers}"
+  DRAMATIQ_MAX_POLL_RECORDS: "${DRAMATIQ_MAX_POLL_RECORDS:-32}"
+  DRAMATIQ_AUTO_OFFSET_RESET: "${DRAMATIQ_AUTO_OFFSET_RESET:-earliest}"
+  KAFKA_MAX_POLL_RECORDS: "${KAFKA_MAX_POLL_RECORDS:-32}"
+  KAFKA_AUTO_OFFSET_RESET: "${KAFKA_AUTO_OFFSET_RESET:-earliest}"
+  # Topic names if workers need them directly (often they subscribe to queues)
+  MINIO_NOTIFY_KAFKA_TOPIC_PRIMARY: ${MINIO_TOPIC:-minio.uploads}
+  MINIO_NOTIFY_KAFKA_TOPIC_SECONDARY: ${MINIO_TOPIC:-minio.uploads.segments}
+  MINIO_NOTIFY_KAFKA_TOPIC_TERTIARY: ${MINIO_TOPIC:-minio.uploads.transcripts}
 services:
-
   # Local services are available on their ports, but also available on:
   # http://api.localhost.tiangolo.com: backend
   # http://dashboard.localhost.tiangolo.com: frontend
@@ -44,6 +62,13 @@ services:
     networks:
       - traefik-public
       - default
+    depends_on:
+      db:
+        condition: service_started
+      minio:
+        condition: service_started
+      kafka:
+        condition: service_started
 
   db:
     restart: "no"
@@ -85,15 +110,12 @@ services:
       SMTP_PORT: "1025"
       SMTP_TLS: "false"
       EMAILS_FROM_EMAIL: "noreply@example.com"
-      CELERY_BROKER_URL: "redis://redis:6379/0"
       STORAGE_ENDPOINT: "http://minio:9000" # Internal endpoint for SDK
       MINIO_PUBLIC_ENDPOINT: "http://storage.${DOMAIN?Variable not set}" # Public endpoint, requires DOMAIN
       STORAGE_ACCESS_KEY: "${MINIO_ROOT_USER:-minio}"
       STORAGE_SECRET_KEY: "${MINIO_ROOT_PASSWORD:-password}"
     depends_on:
       db:
-        condition: service_started
-      redis:
         condition: service_started
       minio:
         condition: service_started
@@ -130,9 +152,11 @@ services:
       - MINIO_ROOT_USER=${MINIO_ROOT_USER}
       - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
       - FRONTEND_ORIGIN=http://dashboard.${DOMAIN?Variable not set} # Example
-      - MINIO_UPLOADS_BUCKET=uploads
-      - MINIO_TRANSCRIPTS_BUCKET=transcripts
-      # - MINIO_CELERY_NOTIFICATION_ARN=arn:minio:sqs::redis:celery # If using notifications
+      - MINIO_PRIMARY_BUCKET=uploads
+      - MINIO_SECONDARY_BUCKET=segments
+      - MINIO_TERTIARY_BUCKET=transcripts
+      - MINIO_NOTIFY_KAFKA_TOPIC_PRIMARY=${MINIO_TOPIC:-minio.uploads}
+      - MINIO_KAFKA_NOTIFICATION_ARN=arn:minio:sqs::PRIMARY:kafka
     depends_on:
       db:
         condition: service_healthy
@@ -164,61 +188,48 @@ services:
     ports:
       - 9323:9323
 
-  worker-cpu:
-    build:
-      context: ./backend
-      dockerfile: docker/Dockerfile.cpu
-    profiles: ["cpu"]
-    init: true
-    command: ["celery", "-A", "app.tasks", "worker", "-Q", "transcription_cpu", "-l", "info"]
+  kafka:
+    image: bitnami/kafka:latest
+    ports:
+      - "9092:9092"
     environment:
-      - CELERY_BROKER_URL=redis://redis:6379/0
-      # Add other necessary environment variables for the backend if needed
-    depends_on:
-      - redis
-      - minio
+      - KAFKA_KRAFT_CLUSTER_ID=dev-cluster
+      - KAFKA_CFG_PROCESS_ROLES=broker,controller
+      - KAFKA_CFG_NODE_ID=1
+      - KAFKA_CFG_CONTROLLER_QUORUM_VOTERS=1@kafka:9093
+      - KAFKA_CFG_LISTENERS=PLAINTEXT://:9092,CONTROLLER://:9093
+      - KAFKA_CFG_ADVERTISED_LISTENERS=PLAINTEXT://kafka:9092
+      - KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      - KAFKA_CFG_CONTROLLER_LISTENER_NAMES=CONTROLLER
+      - KAFKA_CFG_INTER_BROKER_LISTENER_NAME=PLAINTEXT
+      - ALLOW_PLAINTEXT_LISTENER=yes
+    networks:
+      - default
+      - traefik-public
 
-  worker-cuda:
-    build:
-      context: ./backend
-      dockerfile: docker/Dockerfile.cuda
-    profiles: ["cuda"]
-    command: ["celery", "-A", "app.tasks", "worker", "-Q", "transcription_cuda", "-l", "info"]
+  kafdrop:
+    image: obsidiandynamics/kafdrop:latest
+    restart: "no" # Consistent with other local services
+    ports:
+      - "9002:9000" # Host port 9002, Kafdrop internal port 9000
     environment:
-      - CELERY_BROKER_URL=redis://redis:6379/0
-      # Add other necessary environment variables for the backend if needed
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              capabilities: ["gpu"]
+      KAFKA_BROKERCONNECT: "kafka:9092" # Connects to your existing kafka service
+      JVM_OPTS: "-Xms32M -Xmx64M" # Optional: To keep resource usage low for dev
     depends_on:
-      - redis
-      - minio
-
-  worker-rocm:
-    build:
-      context: ./backend
-      dockerfile: docker/Dockerfile.rocm
-    profiles: ["rocm"]
-    command: ["celery", "-A", "app.tasks", "worker", "-Q", "transcription_rocm", "-l", "info"]
-    environment:
-      - CELERY_BROKER_URL=redis://redis:6379/0
-      # Add other necessary environment variables for the backend if needed
-    devices:
-      - /dev/kfd:/dev/kfd
-      - /dev/dri:/dev/dri
-    security_opt:
-      - seccomp:unconfined
-    depends_on:
-      - redis
-      - minio
-
-  redis:
-    image: redis:7-alpine
-    volumes:
-      - "redisdata:/data"
+      kafka:
+        condition: service_started
+    networks:
+      - default
+      - traefik-public
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=traefik-public"
+      - "traefik.constraint-label=traefik-public"
+      - "traefik.http.routers.kafdrop-http.rule=Host(`kafka-ui.${DOMAIN?Variable not set}`)"
+      - "traefik.http.routers.kafdrop-http.entrypoints=http"
+      - "traefik.http.services.kafdrop-http.loadbalancer.server.port=9000" # Kafdrop's internal port
+      # Use the dummy https-redirect from the local proxy service
+      - "traefik.http.routers.kafdrop-http.middlewares=https-redirect"
 
   minio:
     image: minio/minio:latest
@@ -231,6 +242,11 @@ services:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minio}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-password}
       MINIO_API_CORS_ALLOW_ORIGIN: "http://localhost:5173,http://dashboard.${DOMAIN?Variable not set}"
+      MINIO_NOTIFY_KAFKA_ENABLE_PRIMARY: "on"
+      MINIO_NOTIFY_KAFKA_BROKERS_PRIMARY: "kafka:9092"
+      MINIO_NOTIFY_KAFKA_TOPIC_PRIMARY: ${MINIO_TOPIC:-minio.uploads}
+      MINIO_NOTIFY_KAFKA_TOPIC_SECONDARY: ${MINIO_TOPIC:-minio.uploads.segments}
+      MINIO_NOTIFY_KAFKA_TOPIC_TERTIARY: ${MINIO_TOPIC:-minio.uploads.transcripts}
     command: server /data --console-address ":9001"
     healthcheck:
       test: ["CMD", "/usr/bin/mc", "ready", "local"]
@@ -257,21 +273,119 @@ services:
       - "traefik.http.routers.minio-s3-http.middlewares=https-redirect"
       - "traefik.http.routers.minio-console-http.middlewares=https-redirect"
 
-
   clamav:
     image: mkodockx/docker-clamav:alpine
     volumes:
       - "clamcache:/var/lib/clamav"
 
-  flower:
-    image: mher/flower:2.0.1
-    ports:
-      - "5555:5555"
-    environment:
-      CELERY_BROKER_URL: redis://redis:6379/0
-      FLOWER_BROKER_URL: redis://redis:6379/0
+  # New Dramatiq services
+  dispatcher:
+    build:
+      context: ./backend # Ensure this is the intended build context
+      dockerfile: docker/Dockerfile.cpu # Path relative to new context
+    command: "python -m app.task_orchestration.pipe.dispatcher" # MODIFIED
+    environment: *dramatiq_env
     depends_on:
-      - redis
+      kafka:
+        condition: service_started
+      minio:
+        condition: service_started # Dispatcher reads from MinIO, so it needs MinIO to be up.
+    restart: "no"
+    networks:
+      - default
+
+  worker-convert:
+    build:
+      context: ./backend # Ensure this is the intended build context
+      dockerfile: docker/Dockerfile.cpu # Path relative to new context
+    command: "dramatiq app.task_orchestration.pipe.tasks --processes 4 --queues convert_cpu" # MODIFIED
+    environment: *dramatiq_env
+    depends_on:
+      kafka:
+        condition: service_started
+      minio: # Actors use MinIO via utils
+        condition: service_started
+    restart: "no"
+    networks:
+      - default
+
+  worker-split:
+    build:
+      context: ./backend # Ensure this is the intended build context
+      dockerfile: docker/Dockerfile.cpu # Path relative to new context
+    command: "dramatiq app.task_orchestration.pipe.tasks --processes 4 --queues split_cpu" # MODIFIED
+    environment: *dramatiq_env
+    depends_on:
+      kafka:
+        condition: service_started
+      minio:
+        condition: service_started
+    restart: "no"
+    networks:
+      - default
+
+  worker-transcribe-cpu:
+    build:
+      context: ./backend # Ensure this is the intended build context
+      dockerfile: docker/Dockerfile.cpu # Path relative to new context
+    command: "dramatiq app.task_orchestration.pipe.tasks --processes 2 --queues transcribe_cpu" # MODIFIED
+    environment: *dramatiq_env
+    profiles: ["cpu"]
+    depends_on:
+      kafka:
+        condition: service_started
+      minio:
+        condition: service_started
+    restart: "no"
+    networks:
+      - default
+
+  worker-transcribe-cuda:
+    build:
+      context: ./backend # Ensure this is the intended build context
+      dockerfile: docker/Dockerfile.cuda # Path relative to new context
+    command: "dramatiq app.task_orchestration.pipe.tasks --processes 2 --queues transcribe_gpu" # MODIFIED
+    environment:
+      <<: *dramatiq_env
+      NVIDIA_VISIBLE_DEVICES: "all"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              capabilities: ["gpu"]
+    profiles: ["cuda"]
+    depends_on:
+      kafka:
+        condition: service_started
+      minio:
+        condition: service_started
+    restart: "no"
+    runtime: nvidia
+    networks:
+      - default
+
+  worker-transcribe-rocm: # Added back ROCm worker
+    build:
+      context: ./backend # Ensure this is the intended build context
+      dockerfile: docker/Dockerfile.rocm # Path relative to new context
+    command: "dramatiq app.task_orchestration.pipe.tasks --processes 2 --queues transcribe_rocm" # MODIFIED
+    environment: *dramatiq_env
+    devices:
+      - /dev/kfd:/dev/kfd # Typical for ROCm
+      - /dev/dri:/dev/dri # Typical for ROCm
+    security_opt:
+      - seccomp:unconfined # Often needed for GPU access
+    profiles: ["rocm"]
+    depends_on:
+      kafka:
+        condition: service_started
+      minio:
+        condition: service_started
+    restart: "no"
+    networks:
+      - default
+
 
 networks:
   traefik-public:
@@ -279,6 +393,5 @@ networks:
     external: false
 
 volumes:
-  redisdata: {}
   miniodata: {}
   clamcache: {}

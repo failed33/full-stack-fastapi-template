@@ -66,7 +66,7 @@ def test_generate_presigned_url_and_upload_file(
 
         # Check if object exists
         minio_verify_client.stat_object(
-            settings.MINIO_UPLOADS_BUCKET, object_name_in_bucket
+            settings.MINIO_PRIMARY_BUCKET, object_name_in_bucket
         )
         logger.info(f"Successfully verified {object_name_in_bucket} in MinIO.")
 
@@ -77,7 +77,7 @@ def test_generate_presigned_url_and_upload_file(
         if minio_verify_client:
             try:
                 minio_verify_client.remove_object(
-                    settings.MINIO_UPLOADS_BUCKET, object_name_in_bucket
+                    settings.MINIO_PRIMARY_BUCKET, object_name_in_bucket
                 )
                 logger.info(
                     f"Successfully cleaned up {object_name_in_bucket} from MinIO."
