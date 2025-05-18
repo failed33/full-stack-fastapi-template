@@ -24,6 +24,16 @@ def db() -> Generator[Session, None, None]:
         session.commit()
 
 
+@pytest.fixture(scope="session", autouse=True)
+def override_minio_url_for_tests() -> None:
+    """
+    Overrides the MINIO_URL_INTERNAL setting for the test session
+    to ensure tests can connect to MinIO running on localhost.
+    This is done by directly modifying the imported settings object.
+    """
+    settings.MINIO_URL_INTERNAL = "http://localhost:9000"
+
+
 @pytest.fixture(scope="module")
 def client() -> Generator[TestClient, None, None]:
     with TestClient(app) as c:

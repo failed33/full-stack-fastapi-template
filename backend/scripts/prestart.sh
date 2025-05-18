@@ -11,3 +11,8 @@ alembic upgrade head
 
 # Create initial data in DB
 python app/initial_data.py
+
+# Initialize MinIO buckets and policies
+python app/minio_init.py
+
+echo "Prestart script completed successfully."
