@@ -401,28 +401,3 @@ def abort_multipart_upload_endpoint(
         raise HTTPException(
             status_code=500, detail=f"Could not abort multipart upload: {str(e)}"
         )
-
-
-@router.get("/debug-config")
-def debug_upload_configuration(
-    current_user: CurrentUser,
-) -> dict[str, Any]:
-    """
-    Debug endpoint to check MinIO configuration.
-    Remove this in production!
-    """
-    return {
-        "minio_internal_url": settings.MINIO_URL_INTERNAL,
-        "minio_public_endpoint": settings.MINIO_PUBLIC_ENDPOINT,
-        "primary_bucket": settings.MINIO_PRIMARY_BUCKET,
-        "access_token_expire_minutes": settings.ACCESS_TOKEN_EXPIRE_MINUTES,
-        "frontend_host": settings.FRONTEND_HOST,
-        "frontend_origin": str(settings.FRONTEND_ORIGIN)
-        if settings.FRONTEND_ORIGIN
-        else None,
-        "cors_origins": settings.all_cors_origins,
-        "environment": settings.ENVIRONMENT,
-        "user_id": str(
-            current_user.id
-        ),  # Use current_user to avoid unused parameter warning
-    }
