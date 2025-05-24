@@ -1,19 +1,31 @@
 #
 # Dramatiq services environment variables anchor
 x-dramatiq-env: &dramatiq_env
+  # Redis configuration for Dramatiq workers ONLY
+  REDIS_HOST: "redis"
+  REDIS_PORT: "6379"
+  REDIS_DB: "0"
+  # MinIO access for file operations
+  STORAGE_ENDPOINT: "http://minio:9000"
+  MINIO_PUBLIC_ENDPOINT: "http://storage.${DOMAIN?Variable not set}"
+  STORAGE_ACCESS_KEY: "${MINIO_ROOT_USER:-minio}"
+  STORAGE_SECRET_KEY: "${MINIO_ROOT_PASSWORD:-password}"
+
+# Dispatcher environment variables (still uses Kafka)
+x-dispatcher-env: &dispatcher_env
   KAFKA_BOOTSTRAP: "kafka:9092"
   MINIO_TOPIC: ${MINIO_TOPIC:-minio.uploads} # Used by dispatcher
   STORAGE_ENDPOINT: "http://minio:9000"
   MINIO_PUBLIC_ENDPOINT: "http://storage.${DOMAIN?Variable not set}"
   STORAGE_ACCESS_KEY: "${MINIO_ROOT_USER:-minio}"
   STORAGE_SECRET_KEY: "${MINIO_ROOT_PASSWORD:-password}"
-  # Dramatiq configuration parameters
+  # Kafka configuration parameters for dispatcher
   DRAMATIQ_GROUP_ID: "${DRAMATIQ_GROUP_ID:-tts-workers}"
   DRAMATIQ_MAX_POLL_RECORDS: "${DRAMATIQ_MAX_POLL_RECORDS:-32}"
   DRAMATIQ_AUTO_OFFSET_RESET: "${DRAMATIQ_AUTO_OFFSET_RESET:-earliest}"
   KAFKA_MAX_POLL_RECORDS: "${KAFKA_MAX_POLL_RECORDS:-32}"
   KAFKA_AUTO_OFFSET_RESET: "${KAFKA_AUTO_OFFSET_RESET:-earliest}"
-  # Topic names if workers need them directly (often they subscribe to queues)
+  # Topic names for Kafka
   MINIO_NOTIFY_KAFKA_TOPIC_PRIMARY: ${MINIO_TOPIC:-minio.uploads}
   MINIO_NOTIFY_KAFKA_TOPIC_SECONDARY: ${MINIO_TOPIC:-minio.uploads.segments}
   MINIO_NOTIFY_KAFKA_TOPIC_TERTIARY: ${MINIO_TOPIC:-minio.uploads.transcripts}
@@ -110,6 +122,7 @@ services:
       SMTP_PORT: "1025"
       SMTP_TLS: "false"
       EMAILS_FROM_EMAIL: "noreply@example.com"
+      MINIO_URL_INTERNAL: "http://minio:9000"
       STORAGE_ENDPOINT: "http://minio:9000" # Internal endpoint for SDK
       MINIO_PUBLIC_ENDPOINT: "http://storage.${DOMAIN?Variable not set}" # Public endpoint, requires DOMAIN
       STORAGE_ACCESS_KEY: "${MINIO_ROOT_USER:-minio}"
@@ -119,6 +132,8 @@ services:
         condition: service_started
       minio:
         condition: service_started
+      kafka:
+        condition: service_healthy
 
   mailcatcher:
     image: schickling/mailcatcher
@@ -203,9 +218,20 @@ services:
       - KAFKA_CFG_CONTROLLER_LISTENER_NAMES=CONTROLLER
       - KAFKA_CFG_INTER_BROKER_LISTENER_NAME=PLAINTEXT
       - ALLOW_PLAINTEXT_LISTENER=yes
+      - KAFKA_BOOTSTRAP=kafka:9092
+      - KAFKA_MAX_POLL_RECORDS=32
+      - KAFKA_AUTO_OFFSET_RESET=earliest
+      - MINIO_NOTIFY_KAFKA_TOPIC_PRIMARY=minio.uploads
+      - MINIO_NOTIFY_KAFKA_TOPIC_SECONDARY=minio.uploads.segments
+      - MINIO_NOTIFY_KAFKA_TOPIC_TERTIARY=minio.uploads.transcripts
     networks:
       - default
       - traefik-public
+    healthcheck:
+      test: ["CMD", "kafka-topics.sh", "--bootstrap-server", "localhost:9092", "--list"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
 
   kafdrop:
     image: obsidiandynamics/kafdrop:latest
@@ -264,10 +290,12 @@ services:
       # HTTP router for MinIO API (port 9000)
       - "traefik.http.routers.minio-s3-http.rule=Host(`storage.${DOMAIN?Variable not set}`)"
       - "traefik.http.routers.minio-s3-http.entrypoints=http"
+      - "traefik.http.routers.minio-s3-http.service=minio-s3"
       - "traefik.http.services.minio-s3.loadbalancer.server.port=9000"
       # HTTP router for MinIO Console (port 9001)
       - "traefik.http.routers.minio-console-http.rule=Host(`minio-console.${DOMAIN?Variable not set}`)"
       - "traefik.http.routers.minio-console-http.entrypoints=http"
+      - "traefik.http.routers.minio-console-http.service=minio-console"
       - "traefik.http.services.minio-console.loadbalancer.server.port=9001"
       # Apply dummy https-redirect if consistent with local proxy setup
       - "traefik.http.routers.minio-s3-http.middlewares=https-redirect"
@@ -278,30 +306,40 @@ services:
     volumes:
       - "clamcache:/var/lib/clamav"
 
-  # New Dramatiq services
-  dispatcher:
-    build:
-      context: ./backend # Ensure this is the intended build context
-      dockerfile: docker/Dockerfile.cpu # Path relative to new context
-    command: "python -m app.task_orchestration.pipe.dispatcher" # MODIFIED
-    environment: *dramatiq_env
-    depends_on:
-      kafka:
-        condition: service_started
-      minio:
-        condition: service_started # Dispatcher reads from MinIO, so it needs MinIO to be up.
+  redis:
+    image: redis:alpine
     restart: "no"
+    ports:
+      - "6379:6379"
+    volumes:
+      - "redis-data:/data"
     networks:
       - default
+
+  # New Dramatiq services
+  # dispatcher:
+  #   build:
+  #     context: ./backend # Ensure this is the intended build context
+  #     dockerfile: docker/Dockerfile.cpu # Path relative to new context
+  #   command: "python -m app.task_orchestration.pipe.dispatcher" # MODIFIED
+  #   environment: *dispatcher_env
+  #   depends_on:
+  #     kafka:
+  #       condition: service_started
+  #     minio:
+  #       condition: service_started # Dispatcher reads from MinIO, so it needs MinIO to be up.
+  #   restart: "no"
+  #   networks:
+  #     - default
 
   worker-convert:
     build:
       context: ./backend # Ensure this is the intended build context
       dockerfile: docker/Dockerfile.cpu # Path relative to new context
-    command: "dramatiq app.task_orchestration.pipe.tasks --processes 4 --queues convert_cpu" # MODIFIED
+    command: "dramatiq app.tasks.pipeline_tasks --processes 4 --queues convert_cpu" # MODIFIED
     environment: *dramatiq_env
     depends_on:
-      kafka:
+      redis:
         condition: service_started
       minio: # Actors use MinIO via utils
         condition: service_started
@@ -313,10 +351,10 @@ services:
     build:
       context: ./backend # Ensure this is the intended build context
       dockerfile: docker/Dockerfile.cpu # Path relative to new context
-    command: "dramatiq app.task_orchestration.pipe.tasks --processes 4 --queues split_cpu" # MODIFIED
+    command: "dramatiq app.tasks.pipeline_tasks --processes 4 --queues split_cpu" # MODIFIED
     environment: *dramatiq_env
     depends_on:
-      kafka:
+      redis:
         condition: service_started
       minio:
         condition: service_started
@@ -328,11 +366,11 @@ services:
     build:
       context: ./backend # Ensure this is the intended build context
       dockerfile: docker/Dockerfile.cpu # Path relative to new context
-    command: "dramatiq app.task_orchestration.pipe.tasks --processes 2 --queues transcribe_cpu" # MODIFIED
+    command: "dramatiq app.tasks.pipeline_tasks --processes 2 --queues transcribe_cpu" # MODIFIED
     environment: *dramatiq_env
     profiles: ["cpu"]
     depends_on:
-      kafka:
+      redis:
         condition: service_started
       minio:
         condition: service_started
@@ -344,7 +382,7 @@ services:
     build:
       context: ./backend # Ensure this is the intended build context
       dockerfile: docker/Dockerfile.cuda # Path relative to new context
-    command: "dramatiq app.task_orchestration.pipe.tasks --processes 2 --queues transcribe_gpu" # MODIFIED
+    command: "dramatiq app.tasks.pipeline_tasks --processes 2 --queues transcribe_cuda" # MODIFIED
     environment:
       <<: *dramatiq_env
       NVIDIA_VISIBLE_DEVICES: "all"
@@ -356,7 +394,7 @@ services:
               capabilities: ["gpu"]
     profiles: ["cuda"]
     depends_on:
-      kafka:
+      redis:
         condition: service_started
       minio:
         condition: service_started
@@ -369,7 +407,7 @@ services:
     build:
       context: ./backend # Ensure this is the intended build context
       dockerfile: docker/Dockerfile.rocm # Path relative to new context
-    command: "dramatiq app.task_orchestration.pipe.tasks --processes 2 --queues transcribe_rocm" # MODIFIED
+    command: "dramatiq app.tasks.pipeline_tasks --processes 2 --queues transcribe_rocm" # MODIFIED
     environment: *dramatiq_env
     devices:
       - /dev/kfd:/dev/kfd # Typical for ROCm
@@ -378,7 +416,22 @@ services:
       - seccomp:unconfined # Often needed for GPU access
     profiles: ["rocm"]
     depends_on:
-      kafka:
+      redis:
+        condition: service_started
+      minio:
+        condition: service_started
+    restart: "no"
+    networks:
+      - default
+
+  worker-final:
+    build:
+      context: ./backend # Ensure this is the intended build context
+      dockerfile: docker/Dockerfile.cpu # Path relative to new context
+    command: "dramatiq app.tasks.pipeline_tasks --processes 2 --queues final_cpu" # MODIFIED
+    environment: *dramatiq_env
+    depends_on:
+      redis:
         condition: service_started
       minio:
         condition: service_started
@@ -395,3 +448,4 @@ networks:
 volumes:
   miniodata: {}
   clamcache: {}
+  redis-data: {}

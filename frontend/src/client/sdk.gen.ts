@@ -4,6 +4,14 @@ import type { CancelablePromise } from "./core/CancelablePromise"
 import { OpenAPI } from "./core/OpenAPI"
 import { request as __request } from "./core/request"
 import type {
+  FilesStartFileProcessingData,
+  FilesStartFileProcessingResponse,
+  FilesGetFileProcessesData,
+  FilesGetFileProcessesResponse,
+  FilesGetFileProcessData,
+  FilesGetFileProcessResponse,
+  FilesGetProcessSegmentsData,
+  FilesGetProcessSegmentsResponse,
   ItemsReadItemsData,
   ItemsReadItemsResponse,
   ItemsCreateItemData,
@@ -25,6 +33,19 @@ import type {
   LoginRecoverPasswordHtmlContentResponse,
   PrivateCreateUserData,
   PrivateCreateUserResponse,
+  SseSseUpdatesEndpointData,
+  SseSseUpdatesEndpointResponse,
+  UploadsCreatePresignedUploadUrlData,
+  UploadsCreatePresignedUploadUrlResponse,
+  UploadsInitiateMultipartUploadEndpointData,
+  UploadsInitiateMultipartUploadEndpointResponse,
+  UploadsGetMultipartPartUrlData,
+  UploadsGetMultipartPartUrlResponse,
+  UploadsCompleteMultipartUploadEndpointData,
+  UploadsCompleteMultipartUploadEndpointResponse,
+  UploadsAbortMultipartUploadEndpointData,
+  UploadsAbortMultipartUploadEndpointResponse,
+  UploadsDebugUploadConfigurationResponse,
   UsersReadUsersData,
   UsersReadUsersResponse,
   UsersCreateUserData,
@@ -46,7 +67,173 @@ import type {
   UtilsTestEmailData,
   UtilsTestEmailResponse,
   UtilsHealthCheckResponse,
+  UtilsGetSseUrlResponse,
 } from "./types.gen"
+
+export class FilesService {
+  /**
+   * Start File Processing
+   * Starts a new processing task for a given file.
+   *
+   * Args:
+   * session: Database session dependency
+   * current_user: Authenticated user from JWT token
+   * file_id: UUID of the file to process
+   * request_data: Processing request containing process_type
+   *
+   * Returns:
+   * FileProcessPublic: The created FileProcess record
+   *
+   * Raises:
+   * HTTPException: 404 if file not found, 403 if unauthorized,
+   * 400 if upload not complete, 500 if processing failed
+   * @param data The data for the request.
+   * @param data.fileId
+   * @param data.requestBody
+   * @returns FileProcessPublic Successful Response
+   * @throws ApiError
+   */
+  public static startFileProcessing(
+    data: FilesStartFileProcessingData,
+  ): CancelablePromise<FilesStartFileProcessingResponse> {
+    return __request(OpenAPI, {
+      method: "POST",
+      url: "/api/v1/files/{file_id}/start-process",
+      path: {
+        file_id: data.fileId,
+      },
+      body: data.requestBody,
+      mediaType: "application/json",
+      errors: {
+        422: "Validation Error",
+      },
+    })
+  }
+
+  /**
+   * Get File Processes
+   * Get all processing records for a specific file.
+   *
+   * Args:
+   * session: Database session dependency
+   * current_user: Authenticated user from JWT token
+   * file_id: UUID of the file to get processes for
+   * skip: Number of records to skip (pagination)
+   * limit: Maximum number of records to return (pagination)
+   *
+   * Returns:
+   * list[FileProcessPublic]: List of FileProcess records for the file
+   *
+   * Raises:
+   * HTTPException: 404 if file not found, 403 if unauthorized
+   * @param data The data for the request.
+   * @param data.fileId
+   * @param data.skip
+   * @param data.limit
+   * @returns FileProcessPublic Successful Response
+   * @throws ApiError
+   */
+  public static getFileProcesses(
+    data: FilesGetFileProcessesData,
+  ): CancelablePromise<FilesGetFileProcessesResponse> {
+    return __request(OpenAPI, {
+      method: "GET",
+      url: "/api/v1/files/{file_id}/processes",
+      path: {
+        file_id: data.fileId,
+      },
+      query: {
+        skip: data.skip,
+        limit: data.limit,
+      },
+      errors: {
+        422: "Validation Error",
+      },
+    })
+  }
+
+  /**
+   * Get File Process
+   * Get a specific processing record for a file.
+   *
+   * Args:
+   * session: Database session dependency
+   * current_user: Authenticated user from JWT token
+   * file_id: UUID of the file
+   * process_id: UUID of the specific process
+   *
+   * Returns:
+   * FileProcessPublic: The requested FileProcess record
+   *
+   * Raises:
+   * HTTPException: 404 if file/process not found, 403 if unauthorized
+   * @param data The data for the request.
+   * @param data.fileId
+   * @param data.processId
+   * @returns FileProcessPublic Successful Response
+   * @throws ApiError
+   */
+  public static getFileProcess(
+    data: FilesGetFileProcessData,
+  ): CancelablePromise<FilesGetFileProcessResponse> {
+    return __request(OpenAPI, {
+      method: "GET",
+      url: "/api/v1/files/{file_id}/processes/{process_id}",
+      path: {
+        file_id: data.fileId,
+        process_id: data.processId,
+      },
+      errors: {
+        422: "Validation Error",
+      },
+    })
+  }
+
+  /**
+   * Get Process Segments
+   * Get all segments for a specific file process.
+   *
+   * Args:
+   * session: Database session dependency
+   * current_user: Authenticated user from JWT token
+   * file_id: UUID of the file
+   * process_id: UUID of the process
+   * skip: Number of records to skip (pagination)
+   * limit: Maximum number of records to return (pagination)
+   *
+   * Returns:
+   * list[FileSegmentPublic]: List of FileSegment records for the process
+   *
+   * Raises:
+   * HTTPException: 404 if file/process not found, 403 if unauthorized
+   * @param data The data for the request.
+   * @param data.fileId
+   * @param data.processId
+   * @param data.skip
+   * @param data.limit
+   * @returns FileSegmentPublic Successful Response
+   * @throws ApiError
+   */
+  public static getProcessSegments(
+    data: FilesGetProcessSegmentsData,
+  ): CancelablePromise<FilesGetProcessSegmentsResponse> {
+    return __request(OpenAPI, {
+      method: "GET",
+      url: "/api/v1/files/{file_id}/processes/{process_id}/segments",
+      path: {
+        file_id: data.fileId,
+        process_id: data.processId,
+      },
+      query: {
+        skip: data.skip,
+        limit: data.limit,
+      },
+      errors: {
+        422: "Validation Error",
+      },
+    })
+  }
+}
 
 export class ItemsService {
   /**
@@ -298,6 +485,161 @@ export class PrivateService {
   }
 }
 
+export class SseService {
+  /**
+   * Subscribe to Server-Sent Events for real-time updates
+   * @param data The data for the request.
+   * @param data.token JWT token for authentication
+   * @returns unknown Successful Response
+   * @throws ApiError
+   */
+  public static sseUpdatesEndpoint(
+    data: SseSseUpdatesEndpointData = {},
+  ): CancelablePromise<SseSseUpdatesEndpointResponse> {
+    return __request(OpenAPI, {
+      method: "GET",
+      url: "/api/v1/sse/stream",
+      query: {
+        token: data.token,
+      },
+      errors: {
+        422: "Validation Error",
+      },
+    })
+  }
+}
+
+export class UploadsService {
+  /**
+   * Create Presigned Upload Url
+   * Generates a presigned URL for uploading a file directly to MinIO
+   * and creates a corresponding File record in the database.
+   * @param data The data for the request.
+   * @param data.requestBody
+   * @returns PresignedUrlResponse Successful Response
+   * @throws ApiError
+   */
+  public static createPresignedUploadUrl(
+    data: UploadsCreatePresignedUploadUrlData,
+  ): CancelablePromise<UploadsCreatePresignedUploadUrlResponse> {
+    return __request(OpenAPI, {
+      method: "POST",
+      url: "/api/v1/uploads/presigned-url",
+      body: data.requestBody,
+      mediaType: "application/json",
+      errors: {
+        422: "Validation Error",
+      },
+    })
+  }
+
+  /**
+   * Initiate Multipart Upload Endpoint
+   * Initiate a multipart upload for large files.
+   * Creates a database record and returns an upload ID for subsequent part uploads.
+   * @param data The data for the request.
+   * @param data.requestBody
+   * @returns InitiateMultipartResponse Successful Response
+   * @throws ApiError
+   */
+  public static initiateMultipartUploadEndpoint(
+    data: UploadsInitiateMultipartUploadEndpointData,
+  ): CancelablePromise<UploadsInitiateMultipartUploadEndpointResponse> {
+    return __request(OpenAPI, {
+      method: "POST",
+      url: "/api/v1/uploads/multipart/initiate",
+      body: data.requestBody,
+      mediaType: "application/json",
+      errors: {
+        422: "Validation Error",
+      },
+    })
+  }
+
+  /**
+   * Get Multipart Part Url
+   * Generate a presigned URL for uploading a specific part of a multipart upload.
+   * @param data The data for the request.
+   * @param data.requestBody
+   * @returns PresignedPartUrlResponse Successful Response
+   * @throws ApiError
+   */
+  public static getMultipartPartUrl(
+    data: UploadsGetMultipartPartUrlData,
+  ): CancelablePromise<UploadsGetMultipartPartUrlResponse> {
+    return __request(OpenAPI, {
+      method: "POST",
+      url: "/api/v1/uploads/multipart/part-url",
+      body: data.requestBody,
+      mediaType: "application/json",
+      errors: {
+        422: "Validation Error",
+      },
+    })
+  }
+
+  /**
+   * Complete Multipart Upload Endpoint
+   * Complete a multipart upload by combining all uploaded parts.
+   * @param data The data for the request.
+   * @param data.requestBody
+   * @returns CompleteMultipartResponse Successful Response
+   * @throws ApiError
+   */
+  public static completeMultipartUploadEndpoint(
+    data: UploadsCompleteMultipartUploadEndpointData,
+  ): CancelablePromise<UploadsCompleteMultipartUploadEndpointResponse> {
+    return __request(OpenAPI, {
+      method: "POST",
+      url: "/api/v1/uploads/multipart/complete",
+      body: data.requestBody,
+      mediaType: "application/json",
+      errors: {
+        422: "Validation Error",
+      },
+    })
+  }
+
+  /**
+   * Abort Multipart Upload Endpoint
+   * Abort a multipart upload and clean up resources.
+   * @param data The data for the request.
+   * @param data.fileId
+   * @param data.uploadId
+   * @returns string Successful Response
+   * @throws ApiError
+   */
+  public static abortMultipartUploadEndpoint(
+    data: UploadsAbortMultipartUploadEndpointData,
+  ): CancelablePromise<UploadsAbortMultipartUploadEndpointResponse> {
+    return __request(OpenAPI, {
+      method: "POST",
+      url: "/api/v1/uploads/multipart/abort",
+      query: {
+        file_id: data.fileId,
+        upload_id: data.uploadId,
+      },
+      errors: {
+        422: "Validation Error",
+      },
+    })
+  }
+
+  /**
+   * Debug Upload Configuration
+   * Debug endpoint to check MinIO configuration.
+   * Remove this in production!
+   * @returns unknown Successful Response
+   * @throws ApiError
+   */
+  public static debugUploadConfiguration(): CancelablePromise<UploadsDebugUploadConfigurationResponse> {
+    return __request(OpenAPI, {
+      method: "GET",
+      url: "/api/v1/uploads/debug-config",
+    })
+  }
+}
+
 export class UsersService {
   /**
    * Read Users
@@ -544,6 +886,19 @@ export class UtilsService {
     return __request(OpenAPI, {
       method: "GET",
       url: "/api/v1/utils/health-check/",
+    })
+  }
+
+  /**
+   * Get Sse Url
+   * Provides the full SSE URL for client connections.
+   * @returns SSEUrlResponse Successful Response
+   * @throws ApiError
+   */
+  public static getSseUrl(): CancelablePromise<UtilsGetSseUrlResponse> {
+    return __request(OpenAPI, {
+      method: "GET",
+      url: "/api/v1/utils/sse-url/",
     })
   }
 }

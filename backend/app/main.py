@@ -5,6 +5,9 @@ from starlette.middleware.cors import CORSMiddleware
 
 from app.api.main import api_router
 from app.core.config import settings
+from app.core.dramatiq_setup import import_actors, setup_dramatiq_broker
+from app.infra.kafka_engine.kafka import router as minio_processing_router
+from app.infra.kafka_engine.kafka_to_sse_bridge import kafka_sse_router
 
 
 def custom_generate_unique_id(route: APIRoute) -> str:
@@ -13,6 +16,10 @@ def custom_generate_unique_id(route: APIRoute) -> str:
 
 if settings.SENTRY_DSN and settings.ENVIRONMENT != "local":
     sentry_sdk.init(dsn=str(settings.SENTRY_DSN), enable_tracing=True)
+
+# Initialize Dramatiq broker and import actors
+setup_dramatiq_broker()
+import_actors()
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
@@ -31,3 +38,5 @@ if settings.all_cors_origins:
     )
 
 app.include_router(api_router, prefix=settings.API_V1_STR)
+app.include_router(minio_processing_router)
+app.include_router(kafka_sse_router)

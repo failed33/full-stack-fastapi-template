@@ -7,10 +7,12 @@ WORKDIR /app
 # build-essential for compiling any Python packages that need it
 # ffmpeg for media processing
 # curl might be useful for diagnostics or downloading other resources if needed
+# redis-tools for debugging Redis connections if needed
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     ffmpeg \
-    curl && \
+    curl \
+    redis-tools && \
     rm -rf /var/lib/apt/lists/*
 
 # Install uv
@@ -43,10 +45,26 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # This makes 'app' the top-level package inside the image at /app/.
 COPY ./ /app/
 
+# Add /app to PYTHONPATH to ensure proper module imports
+ENV PYTHONPATH="${PYTHONPATH}:/app"
+
 # Sync the project itself (installs the 'app' package as defined in /app/pyproject.toml
 # and any remaining dependencies). uv will find the 'app' sources in /app/app/.
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked
+
+# Create a health check script for worker diagnostics
+RUN echo '#!/bin/bash\n\
+if [ -z "$REDIS_HOST" ]; then\n\
+    echo "REDIS_HOST not set, using default localhost"\n\
+    REDIS_HOST="localhost"\n\
+fi\n\
+if [ -z "$REDIS_PORT" ]; then\n\
+    echo "REDIS_PORT not set, using default 6379"\n\
+    REDIS_PORT="6379"\n\
+fi\n\
+redis-cli -h "$REDIS_HOST" -p "$REDIS_PORT" ping' > /usr/local/bin/redis-health-check.sh && \
+    chmod +x /usr/local/bin/redis-health-check.sh
 
 # ENTRYPOINT allows for easy command overriding in docker-compose
 ENTRYPOINT ["bash", "-c"]

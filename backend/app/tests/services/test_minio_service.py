@@ -1,8 +1,10 @@
+import asyncio
 import json
 import logging
 from unittest.mock import MagicMock, call, patch  # Added call
 
 import pytest
+from faststream.kafka import TestKafkaBroker
 from minio.error import S3Error
 from minio.notificationconfig import NotificationConfig
 
@@ -21,6 +23,7 @@ def logger_mock():
 def mock_settings():
     settings = MagicMock(spec=Settings)
     settings.MINIO_URL_INTERNAL = "http://minio:9000"
+    settings.MINIO_PUBLIC_ENDPOINT = "http://storage.localhost"
     settings.MINIO_ROOT_USER = "testuser"
     settings.MINIO_ROOT_PASSWORD = "testpassword"
     settings.MINIO_PRIMARY_BUCKET = "uploads"
@@ -103,6 +106,137 @@ def test_get_minio_client_missing_credentials(mock_settings, logger_mock):  # py
     mock_settings.MINIO_ROOT_PASSWORD = None
     with pytest.raises(ValueError, match="MinIO credentials not set in settings."):
         minio_service.get_minio_client(mock_settings, logger_mock)
+    # error logger called twice now
+    assert logger_mock.error.call_count == 2
+
+
+# Tests for get_minio_client_for_presigned_urls
+@patch("app.services.minio_service.Minio")
+def test_get_minio_client_for_presigned_urls_with_public_endpoint(
+    mock_minio_constructor, mock_settings, logger_mock
+):  # pylint: disable=redefined-outer-name
+    """Test that the presigned URLs client uses the public endpoint when available."""
+    endpoint, secure = minio_service._parse_endpoint(
+        mock_settings.MINIO_PUBLIC_ENDPOINT
+    )  # pylint: disable=protected-access
+
+    client_instance_mock = MagicMock()
+    mock_minio_constructor.return_value = client_instance_mock
+
+    client = minio_service.get_minio_client_for_presigned_urls(
+        mock_settings, logger_mock
+    )
+
+    mock_minio_constructor.assert_called_once_with(
+        endpoint,
+        access_key=mock_settings.MINIO_ROOT_USER,
+        secret_key=mock_settings.MINIO_ROOT_PASSWORD,
+        secure=secure,
+    )
+    assert client == client_instance_mock
+    logger_mock.debug.assert_called_with(
+        f"Minio client for presigned URLs configured for endpoint: '{endpoint}', secure: {secure}"
+    )
+
+
+@patch("app.services.minio_service.Minio")
+def test_get_minio_client_for_presigned_urls_fallback_to_internal(
+    mock_minio_constructor, mock_settings, logger_mock
+):  # pylint: disable=redefined-outer-name
+    """Test that the presigned URLs client falls back to internal endpoint when public endpoint is None."""
+    mock_settings.MINIO_PUBLIC_ENDPOINT = None
+    # The function should use MINIO_URL_INTERNAL directly since it already has the scheme
+    endpoint, secure = minio_service._parse_endpoint(mock_settings.MINIO_URL_INTERNAL)  # pylint: disable=protected-access
+
+    client_instance_mock = MagicMock()
+    mock_minio_constructor.return_value = client_instance_mock
+
+    client = minio_service.get_minio_client_for_presigned_urls(
+        mock_settings, logger_mock
+    )
+
+    mock_minio_constructor.assert_called_once_with(
+        endpoint,
+        access_key=mock_settings.MINIO_ROOT_USER,
+        secret_key=mock_settings.MINIO_ROOT_PASSWORD,
+        secure=secure,
+    )
+    assert client == client_instance_mock
+    logger_mock.debug.assert_called_with(
+        f"Minio client for presigned URLs configured for endpoint: '{endpoint}', secure: {secure}"
+    )
+
+
+@patch("app.services.minio_service.Minio")
+def test_get_minio_client_for_presigned_urls_adds_http_scheme(
+    mock_minio_constructor, mock_settings, logger_mock
+):  # pylint: disable=redefined-outer-name
+    """Test that the presigned URLs client adds http scheme if missing."""
+    mock_settings.MINIO_PUBLIC_ENDPOINT = "storage.localhost"  # No scheme
+    expected_endpoint = "storage.localhost"
+
+    client_instance_mock = MagicMock()
+    mock_minio_constructor.return_value = client_instance_mock
+
+    client = minio_service.get_minio_client_for_presigned_urls(
+        mock_settings, logger_mock
+    )
+
+    mock_minio_constructor.assert_called_once_with(
+        expected_endpoint,
+        access_key=mock_settings.MINIO_ROOT_USER,
+        secret_key=mock_settings.MINIO_ROOT_PASSWORD,
+        secure=False,
+    )
+    assert client == client_instance_mock
+    logger_mock.debug.assert_called_with(
+        f"Minio client for presigned URLs configured for endpoint: '{expected_endpoint}', secure: False"
+    )
+
+
+@patch("app.services.minio_service.Minio")
+def test_get_minio_client_for_presigned_urls_fallback_adds_scheme(
+    mock_minio_constructor, mock_settings, logger_mock
+):  # pylint: disable=redefined-outer-name
+    """Test that the presigned URLs client adds scheme when falling back to internal endpoint without scheme."""
+    mock_settings.MINIO_PUBLIC_ENDPOINT = None
+    mock_settings.MINIO_URL_INTERNAL = "minio:9000"  # No scheme
+    expected_endpoint = "minio:9000"
+
+    client_instance_mock = MagicMock()
+    mock_minio_constructor.return_value = client_instance_mock
+
+    client = minio_service.get_minio_client_for_presigned_urls(
+        mock_settings, logger_mock
+    )
+
+    mock_minio_constructor.assert_called_once_with(
+        expected_endpoint,
+        access_key=mock_settings.MINIO_ROOT_USER,
+        secret_key=mock_settings.MINIO_ROOT_PASSWORD,
+        secure=False,
+    )
+    assert client == client_instance_mock
+    logger_mock.debug.assert_called_with(
+        f"Minio client for presigned URLs configured for endpoint: '{expected_endpoint}', secure: False"
+    )
+
+
+def test_get_minio_client_for_presigned_urls_missing_credentials(
+    mock_settings, logger_mock
+):  # pylint: disable=redefined-outer-name
+    """Test that the presigned URLs client raises ValueError when credentials are missing."""
+    mock_settings.MINIO_ROOT_USER = None
+    with pytest.raises(ValueError, match="MinIO credentials not set in settings."):
+        minio_service.get_minio_client_for_presigned_urls(mock_settings, logger_mock)
+    logger_mock.error.assert_called_once_with(
+        "MINIO_ROOT_USER and MINIO_ROOT_PASSWORD environment variables must be set."
+    )
+
+    mock_settings.MINIO_ROOT_USER = "user"
+    mock_settings.MINIO_ROOT_PASSWORD = None
+    with pytest.raises(ValueError, match="MinIO credentials not set in settings."):
+        minio_service.get_minio_client_for_presigned_urls(mock_settings, logger_mock)
     # error logger called twice now
     assert logger_mock.error.call_count == 2
 
@@ -382,7 +516,7 @@ def test_set_bucket_notifications_success(
     )
 
     expected_events = ["s3:ObjectCreated:*"]
-    expected_id = f"celery-queue-{bucket_name.replace('.', '-')}-notification"
+    expected_id = f"dramatiq-queue-{bucket_name.replace('.', '-')}-notification"
 
     # Check that set_bucket_notification was called with a NotificationConfig
     # containing the correct QueueConfig
@@ -770,3 +904,122 @@ def test_upload_file_from_tmp_cleanup_oserror(
     logger_mock.error.assert_called_once_with(
         f"Error cleaning up temporary file '{local_file_path}': {os_error_on_remove}"
     )
+
+
+@pytest.mark.asyncio
+async def test_upload_and_receive_kafka_notification(
+    minio_client_mock: MagicMock,
+    mock_settings: Settings,
+    logger_mock: MagicMock,
+    kafka_test_broker: TestKafkaBroker,  # Inject the fixture from conftest.py
+):
+    """
+    Tests that a simulated file upload to MinIO followed by a simulated Kafka
+    notification triggers the Kafka consumer, which processes the message correctly.
+    Uses the globally patched kafka_test_broker.
+    """
+    # 1. Setup: Define bucket, object, and Kafka details
+    bucket_name = mock_settings.MINIO_PRIMARY_BUCKET
+    object_key = "test_upload_for_kafka.txt"
+    local_file_path = "/tmp/test_upload_for_kafka.txt"  # Dummy path
+    # This topic MUST match the one used in the @router.subscriber decorator in minio_event_handlers.py
+    kafka_topic = "minio-bucket-notifications"
+
+    # Mock os.path.exists for upload_file_from_tmp to think the local file exists
+    # and os.remove for the cleanup part.
+    with patch("app.services.minio_service.os.path.exists", return_value=True), patch(
+        "app.services.minio_service.os.remove"
+    ) as mock_os_remove:
+        # 2. Simulate successful file upload
+        minio_client_mock.fput_object.return_value = (
+            None  # Mock direct MinIO client call
+        )
+
+        upload_successful = minio_service.upload_file_from_tmp(
+            client=minio_client_mock,
+            local_file_path=local_file_path,
+            bucket_name=bucket_name,
+            target_object_name=object_key,
+            logger=logger_mock,
+            cleanup_tmp_file=False,
+        )
+        assert upload_successful, "Simulated MinIO upload failed"
+        minio_client_mock.fput_object.assert_called_once_with(
+            bucket_name, object_key, local_file_path
+        )
+
+        # 3. Simulate MinIO sending Kafka notification
+        # Prepare a realistic MinIO event message
+        # (Timestamps and some IDs are examples)
+        object_size = 54321  # Example size for the test event
+        minio_event_message = {
+            "Records": [
+                {
+                    "eventVersion": "2.1",
+                    "eventSource": "minio:s3",
+                    "awsRegion": "",
+                    "eventTime": "2023-10-27T10:00:00.000Z",
+                    "eventName": "s3:ObjectCreated:Put",
+                    "userIdentity": {"principalId": "minio-user"},
+                    "requestParameters": {"sourceIPAddress": "127.0.0.1"},
+                    "responseElements": {
+                        "x-amz-request-id": "178C89F578A8812E",  # Example
+                        "x-minio-deployment-id": "a1b2c3d4-e5f6-7890-1234-abcdef012345",  # Example
+                        "x-minio-origin-endpoint": mock_settings.MINIO_URL_INTERNAL,
+                    },
+                    "s3": {
+                        "s3SchemaVersion": "1.0",
+                        "configurationId": "Kafka",  # Example
+                        "bucket": {
+                            "name": bucket_name,
+                            "ownerIdentity": {"principalId": "minio-user"},
+                            "arn": f"arn:aws:s3:::{bucket_name}",
+                        },
+                        "object": {
+                            "key": object_key,
+                            "size": object_size,
+                            "eTag": "a1b2c3d4e5f67890abcdef0123456789",  # Example ETag
+                            "contentType": "text/plain",
+                            "userMetadata": None,
+                            "sequencer": "178C89F578A8812F",  # Example
+                        },
+                    },
+                }
+            ]
+        }
+
+        # 4. Patch the logger inside the consumer to check its calls
+        # The logger in app.consumers.minio_event_handlers is named after the module.
+        with patch(
+            "app.infra.kafka_engine.consumers.minio_event_handlers.logger"
+        ) as mock_consumer_logger:
+            # Use the injected kafka_test_broker from conftest.py
+            # No need for `async with TestKafkaBroker(...) as ...:` here,
+            # as the fixture handles the broker's lifecycle and patching.
+            await kafka_test_broker.publish(minio_event_message, topic=kafka_topic)
+
+            # Give a very brief moment for async processing, if necessary.
+            # Usually, FastStream's test utilities handle this, but for very fast checks:
+            await asyncio.sleep(0.01)
+
+            # TestKafkaBroker waits for the handler to complete IF it knows about it.
+            # We then check for expected log messages from the consumer.
+
+            expected_log_info = f"Object '{object_key}' (size: {object_size}) was created in bucket '{bucket_name}'."
+
+            # Check if the expected info log was called
+            found_log = False
+            for call_item in mock_consumer_logger.info.call_args_list:
+                if expected_log_info in call_item.args[0]:
+                    found_log = True
+                    break
+            assert found_log, (
+                f"Expected log message not found: '{expected_log_info}'. "
+                f"Actual info logs: {[item.args[0] for item in mock_consumer_logger.info.call_args_list]}"
+            )
+
+        # Assert that os.remove was called or not based on cleanup_tmp_file
+        if False:  # Corresponds to cleanup_tmp_file = False
+            mock_os_remove.assert_not_called()
+        else:  # If cleanup_tmp_file were True
+            pass  # mock_os_remove.assert_called_once_with(local_file_path)

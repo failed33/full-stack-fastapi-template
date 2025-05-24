@@ -16,6 +16,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     build-essential \
     curl \
+    redis-tools \
     && rm -rf /var/lib/apt/lists/*
 
 # Make python3.12 the default python3 and pip3
@@ -40,6 +41,10 @@ COPY uv.lock* /app/
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-install-project
 
+# Install PyTorch with ROCm support for GPU workers
+# This ensures we have the right PyTorch version for ROCm transcription tasks
+RUN /app/.venv/bin/pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/rocm5.7
+
 # Copy application code
 COPY ./ /app/
 
@@ -48,5 +53,22 @@ ENV PYTHONPATH="${PYTHONPATH}:/app"
 # Sync the project itself
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked
+
+# Create a health check script for worker diagnostics
+RUN echo '#!/bin/bash\n\
+if [ -z "$REDIS_HOST" ]; then\n\
+    echo "REDIS_HOST not set, using default localhost"\n\
+    REDIS_HOST="localhost"\n\
+fi\n\
+if [ -z "$REDIS_PORT" ]; then\n\
+    echo "REDIS_PORT not set, using default 6379"\n\
+    REDIS_PORT="6379"\n\
+fi\n\
+echo "Checking Redis connection..."\n\
+redis-cli -h "$REDIS_HOST" -p "$REDIS_PORT" ping\n\
+echo "Checking ROCm availability..."\n\
+python3 -c "import torch; print(f\"CUDA available: {torch.cuda.is_available()}\"); print(f\"CUDA devices: {torch.cuda.device_count()}\")" 2>/dev/null || echo "PyTorch not available"\n\
+rocm-smi --showproductname 2>/dev/null || echo "ROCm tools not available"' > /usr/local/bin/health-check.sh && \
+    chmod +x /usr/local/bin/health-check.sh
 
 ENTRYPOINT ["bash", "-c"]

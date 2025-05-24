@@ -9,8 +9,77 @@ export type Body_login_login_access_token = {
   client_secret?: string | null
 }
 
+export type CompleteMultipartRequest = {
+  file_id: string
+  upload_id: string
+  parts: Array<{
+    [key: string]: unknown
+  }>
+}
+
+export type CompleteMultipartResponse = {
+  file_id: string
+  object_name: string
+  etag: string
+  location: string
+}
+
+export type FileProcessPublic = {
+  process_type?: "transcription" | "analysis" | "unknown"
+  status?: "pending" | "processing" | "completed" | "failed" | "cancelled"
+  initiated_at?: string
+  completed_at?: string | null
+  duration_ms?: number | null
+  error_message?: string | null
+  result_data?: {
+    [key: string]: unknown
+  } | null
+  id: string
+  file_id: string
+  user_id: string
+}
+
+export type process_type = "transcription" | "analysis" | "unknown"
+
+export type status =
+  | "pending"
+  | "processing"
+  | "completed"
+  | "failed"
+  | "cancelled"
+
+export type FileSegmentPublic = {
+  segment_index: number
+  minio_object_name: string
+  status?: "pending" | "processing" | "completed" | "failed" | "cancelled"
+  transcription_text_minio_path?: string | null
+  transcription_summary?: string | null
+  processing_started_at?: string | null
+  processing_completed_at?: string | null
+  processing_duration_ms?: number | null
+  error_message?: string | null
+  id: string
+  file_process_id: string
+  original_file_id: string
+  user_id: string
+}
+
 export type HTTPValidationError = {
   detail?: Array<ValidationError>
+}
+
+export type InitiateMultipartRequest = {
+  filename: string
+  content_type?: string | null
+  file_size_bytes?: number | null
+}
+
+export type InitiateMultipartResponse = {
+  upload_id: string
+  object_name: string
+  file_id: string
+  recommended_part_size: number
+  total_parts: number
 }
 
 export type ItemCreate = {
@@ -44,11 +113,65 @@ export type NewPassword = {
   new_password: string
 }
 
+export type PresignedPartUrlRequest = {
+  file_id: string
+  upload_id: string
+  part_number: number
+}
+
+export type PresignedPartUrlResponse = {
+  url: string
+  part_number: number
+  headers_to_set: {
+    [key: string]: string
+  }
+}
+
+export type PresignedUrlRequest = {
+  filename: string
+  content_type?: string | null
+}
+
+export type PresignedUrlResponse = {
+  url: string
+  object_name: string
+  file_id: string
+  headers_to_set: {
+    [key: string]: string
+  }
+}
+
 export type PrivateUserCreate = {
   email: string
   password: string
   full_name: string
   is_verified?: boolean
+}
+
+export type ProcessStatus =
+  | "pending"
+  | "processing"
+  | "completed"
+  | "failed"
+  | "cancelled"
+
+export type ProcessType_Input = "transcription" | "analysis" | "unknown"
+
+export type ProcessType_Output = "transcription" | "analysis" | "unknown"
+
+export type SSEUrlResponse = {
+  url: string
+}
+
+/**
+ * Request model for starting file processing.
+ */
+export type StartProcessRequest = {
+  process_type?: ProcessType_Input
+  /**
+   * Preferred hardware: cpu, cuda, rocm
+   */
+  target_hardware?: string
 }
 
 export type Token = {
@@ -106,6 +229,37 @@ export type ValidationError = {
   msg: string
   type: string
 }
+
+export type FilesStartFileProcessingData = {
+  fileId: string
+  requestBody: StartProcessRequest
+}
+
+export type FilesStartFileProcessingResponse = FileProcessPublic
+
+export type FilesGetFileProcessesData = {
+  fileId: string
+  limit?: number
+  skip?: number
+}
+
+export type FilesGetFileProcessesResponse = Array<FileProcessPublic>
+
+export type FilesGetFileProcessData = {
+  fileId: string
+  processId: string
+}
+
+export type FilesGetFileProcessResponse = FileProcessPublic
+
+export type FilesGetProcessSegmentsData = {
+  fileId: string
+  limit?: number
+  processId: string
+  skip?: number
+}
+
+export type FilesGetProcessSegmentsResponse = Array<FileSegmentPublic>
 
 export type ItemsReadItemsData = {
   limit?: number
@@ -171,6 +325,54 @@ export type PrivateCreateUserData = {
 
 export type PrivateCreateUserResponse = UserPublic
 
+export type SseSseUpdatesEndpointData = {
+  /**
+   * JWT token for authentication
+   */
+  token?: string | null
+}
+
+export type SseSseUpdatesEndpointResponse = unknown
+
+export type UploadsCreatePresignedUploadUrlData = {
+  requestBody: PresignedUrlRequest
+}
+
+export type UploadsCreatePresignedUploadUrlResponse = PresignedUrlResponse
+
+export type UploadsInitiateMultipartUploadEndpointData = {
+  requestBody: InitiateMultipartRequest
+}
+
+export type UploadsInitiateMultipartUploadEndpointResponse =
+  InitiateMultipartResponse
+
+export type UploadsGetMultipartPartUrlData = {
+  requestBody: PresignedPartUrlRequest
+}
+
+export type UploadsGetMultipartPartUrlResponse = PresignedPartUrlResponse
+
+export type UploadsCompleteMultipartUploadEndpointData = {
+  requestBody: CompleteMultipartRequest
+}
+
+export type UploadsCompleteMultipartUploadEndpointResponse =
+  CompleteMultipartResponse
+
+export type UploadsAbortMultipartUploadEndpointData = {
+  fileId: string
+  uploadId: string
+}
+
+export type UploadsAbortMultipartUploadEndpointResponse = {
+  [key: string]: string
+}
+
+export type UploadsDebugUploadConfigurationResponse = {
+  [key: string]: unknown
+}
+
 export type UsersReadUsersData = {
   limit?: number
   skip?: number
@@ -232,3 +434,5 @@ export type UtilsTestEmailData = {
 export type UtilsTestEmailResponse = Message
 
 export type UtilsHealthCheckResponse = boolean
+
+export type UtilsGetSseUrlResponse = SSEUrlResponse

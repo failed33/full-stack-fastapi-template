@@ -1,4 +1,5 @@
 import secrets
+import uuid
 import warnings
 from typing import Annotated, Any, Literal
 
@@ -102,11 +103,13 @@ class Settings(BaseSettings):
 
     # minIO configuration parameters
     MINIO_URL_INTERNAL: str = "minio:9000"
+    MINIO_PUBLIC_ENDPOINT: str | None = None
     MINIO_ROOT_USER: str
     MINIO_ROOT_PASSWORD: str
     MINIO_PRIMARY_BUCKET: str = "uploads"
     MINIO_SECONDARY_BUCKET: str = "uploads.segments"
     MINIO_TERTIARY_BUCKET: str = "uploads.transcripts"
+    # Default to "us-east-1" or allow override
     FRONTEND_ORIGIN: HttpUrl | None = None
     MINIO_KAFKA_NOTIFICATION_ARN: str | None = None
 
@@ -122,6 +125,16 @@ class Settings(BaseSettings):
     MINIO_NOTIFY_KAFKA_TOPIC_PRIMARY: str = "minio.uploads"
     MINIO_NOTIFY_KAFKA_TOPIC_SECONDARY: str = "minio.uploads.segments"
     MINIO_NOTIFY_KAFKA_TOPIC_TERTIARY: str = "minio.uploads.transcripts"
+
+    # redis configuration parameters (for Dramatiq)
+    REDIS_HOST: str = "redis"
+    REDIS_PORT: int = 6379
+    REDIS_DB: int = 0
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def APP_INSTANCE_ID(self) -> str:
+        return f"instance-{self.PROJECT_NAME}-{uuid.uuid4().hex[:6]}"
 
     @model_validator(mode="after")
     def _set_default_frontend_origin(self) -> Self:
